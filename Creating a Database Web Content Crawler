@@ -1,0 +1,338 @@
+Creating a Database Web Content Crawler 
+Purpose:-This crawler is created to crawl the web content through url in the database tables.
+Following are the steps that require to create a custom content crawler.
+1)	Creating the Database Web Crawler.
+Which shows you how to crawl a database that tracks content on a website not otherwise crawled and consequently not available in the Content Store.
+
+To create a database web crawler. Following DBWebCrawler.java is required.
+
+package samples.content.dbwebcrawler;
+import java.io.*;
+import java.util.*;
+import java.sql.*;
+import java.net.*;
+import com.inquira.infra.*;
+import com.inquira.navigate.classify.DocTypeClassifier;
+import com.inquira.content.*;
+import com.inquira.content.custom.*;
+import com.inquira.scheduler.job.*;
+import com.inquira.util.sql.*;
+
+/* The DBWebCrawler class implements a custom crawler that accesses 
+* a database containing URLs of documents to crawl
+*/
+
+public class DBWebCrawler extends Crawler
+
+{
+	protected Connection conn;
+	protected Statement st;
+	protected ResultSet rs;
+	
+	/* Called by the content acquisition framework prior to
+	* call starting the crawl
+	*/
+	
+	@Override
+	public void connect(CrawlerConfig configuration) throws CrawlerException 
+	{
+		
+		DBWebCrawlerConfig rcc = (DBWebCrawlerConfig)configuration;
+		try {
+			conn = Datasource.forName( rcc.getDatasourceName( ) ).getConnection( );
+			st = conn.createStatement();
+			rs = st.executeQuery( rcc.getQuery( ));
+			}
+		catch( Throwable t ) 
+		{
+			throw new CrawlerException(t);
+			}
+	}
+	
+	/* Called by the content acquisition framework after 
+	* the crawl is completed 
+	*/
+	
+	@Override
+	public void rundown() throws CrawlerException 
+	{
+		try
+		{
+			if( rs != null )
+			{
+				rs.close();
+			}
+			if( st != null )
+			{
+				st.close();
+			}
+			if( conn != null)
+			{
+				conn.close();
+			}
+			
+		}
+		catch(Throwable t)
+		{
+			throw new CrawlerException( t );
+		}
+		
+	}
+	
+	
+	
+	/* Called by the content acquisition framework prior to call starting 
+	* the crawl after calling connect
+	*/
+	
+	@Override
+	public void start() {
+		
+		
+	}
+	
+	
+	
+	/* Indicates that a single call to the findContent method discovers
+	 * a current document
+	 */
+	@Override
+	public boolean findComplete() {
+		
+		return true;
+	}
+
+	/* Indicates that this is a custom crawler */
+	
+	
+	@Override
+	public ContentSourceType getType() 
+	{
+		
+		return ContentSourceType.HTTP;
+	}
+	
+	
+	/* Returns all currently known document objects that are found
+	* in the data source 
+	*/
+	
+	
+	@Override
+	public Collection findContent(Collection priorContent, CrawlerConfig conf,
+			CrawlerState state, TaskStatus status) throws CrawlerException
+			{
+		Collection rc = new ArrayList( );
+		try {
+			String temp = null;
+			while( rs.next( ) ) {
+				String url = rs.getString( 1 );
+				
+				if( !rs.wasNull( ) && !url.equals( temp ) ) {
+					System.out.println( "Getting URL: " + url );
+					Timestamp time = rs.getTimestamp(2);
+					Document d = new Document( );
+					d.setCollection( conf.getCollection( ) );
+					d.setFetchURL( url );
+					d.setDisplayURL( url );
+					d.setCSType( ContentSourceType.CUSTOM );
+					d.setLastModificationTime( time );
+					d.setIndexingAllowed( true );
+					d.setStatusCode( Document.STATUS_OK );
+					rc.add( d );
+					temp = url;
+				}
+				else {
+					System.out.println( "NULL or Dupe!" );
+				}
+			}
+		}
+		catch(Throwable t)
+		{
+			throw new CrawlerException( t );
+		}
+		return rc;
+	}
+
+	
+	/* Returns the raw content for the given document */
+	
+	
+	@Override
+	public byte[] getContent(CrawlerConfig conf, Document doc)
+			throws CrawlerException
+			{
+		byte[] rc = null;
+		URL url = null;
+		URLConnection urlconn = null;
+		InputStream is = null;
+		ByteArrayOutputStream baos = null;
+		Proxy proxy = new Proxy(Proxy.Type.HTTP, new InetSocketAddress("172.18.65.22", 80));
+		//conn = new URL(urlString).openConnection(proxy);
+		
+		try {
+			url= new URL( doc.getFetchURL( ) );
+			System.out.println( "In getContent, getting URL: " + url );
+			
+			urlconn = url.openConnection(proxy );
+			
+			is = new BufferedInputStream( urlconn.getInputStream( ) );
+			baos = new ByteArrayOutputStream( );
+			byte[] buf = new byte[8192];
+			int count = 0;
+			while( ( count = is.read( buf, 0, buf.length ) ) > 0 ) {
+				baos.write( buf, 0, count );
+			}
+			rc = baos.toByteArray( );
+			doc.setContent( DataComponent.RAW, rc );
+			doc.setDocSize( rc.length );
+			if(doc.getFetchURL( ).contains(".pdf")){
+				doc.setDocType(DocumentType.PDF);
+			}else{
+				doc.setDocType(DocumentType.CMS_HTML);
+			}
+			System.out.println("Document to string " + doc.toString());
+			
+		}
+		catch(ContentStoreException t)
+		{
+			throw new CrawlerException( t );
+			}
+		catch( IOException t )
+		{
+			throw new CrawlerException( t );
+		}
+		finally {
+			if( is != null ) {
+			try {
+			is.close( );
+			} catch( IOException ex ) {
+			// ignore on close
+			}
+			}
+		}
+		
+		return rc;
+	}
+
+}
+
+2)	Configuring the Database Web Crawler
+To configure Database Web Crawler , DBWebCrawlerConfig  java class is required.
+
+This supporting class, containing configuration objects for the DBWebCrawler
+
+package samples.content.dbwebcrawler;
+import java.util.*;
+
+import com.inquira.content.*;
+import com.inquira.content.custom.*;
+
+/* The CustomCrawlerConfig class implements a custom crawler configuration
+* object that knows about two non-standard configuration items:
+*
+* datasourceName - defines the name of the data source that
+* contains the document information
+* query - defines the query string used to find the document information
+*/
+
+public class DBWebCrawlerConfig extends CustomCrawlerConfig
+{
+	private static final String __ident = "$Revision: 1.1.2.2 $";
+	
+	/* Compares the last modification dates of the two documents passed,
+	* to determine if the document has changed
+	*/
+	
+	@Override
+	public boolean isModifiedDocument(Document currentDocument, Document newDocument) {
+		
+		return newDocument.getLastModificationTime( ).after( currentDocument.getLastModificationTime( ));
+	}
+	
+	/* Returns the data source name */
+	
+	public String getDatasourceName( )throws CrawlerException
+	{
+		String dataSourceName = configValues.getProperty( "datasourceName" );
+		if( dataSourceName == null || dataSourceName.length( ) == 0 )
+		{
+			throw new CrawlerException( "CUSTOM_DBWEB_CRAWLER_NO_DATASOURCE", new Object[]{ getCollectionName( )} );
+		}
+		return dataSourceName;
+	}
+	
+	
+	/* Returns the query string */
+	
+	public String getQuery( )throws CrawlerException
+	{
+		
+		String query = configValues.getProperty( "query" );
+		if( query == null || query.length( ) == 0 ) {
+			throw new CrawlerException( "CUSTOM_DBWEB_CRAWLER_NO_QUERY", new Object[]{
+					getCollectionName( ) } );
+			}
+		return query;
+	}
+	
+	
+	/* Returns a new DBWebCrawler object */
+	
+	
+	@Override
+	public Crawler getCrawler() throws CrawlerException {
+		
+		return new DBWebCrawler( );
+	}
+
+	/* Indicates that this crawler compares existing documents in the
+	* content store with documents it discovers to identify content changes
+	*/
+	
+	public boolean fetchExistingContent( )
+	{
+	return true;
+	}
+	
+
+}
+3)	After that make dbcrawl.jar file and put it in the patches folder under the following path.
+
+C:\InQuira_8.4.2.2\patches.
+4)	Configuring a Custom Crawler
+The custom crawler in this example assumes that the customer has developed a content publishing system that uses a database table called "poccontent" containing a record for every document that has been published to their website. This table contains three columns:
+a) url-This column contains the URL at which the document can be accessed  on the website.
+b) modtime-This column contains the last date and time the document was published.
+
+Configuration for custom crawlers is done through the Advanced Config settings in the System Manager
+
+To configure the custom crawler:
+	Open the System Manager and choose Advanced Config from the Tools menu.
+	Select Crawler Settings and choose Edit.
+	Under Custom Crawlers, select Add New Item.
+	Enter the Item Name, Class Name, and add the Configuration fields for the data source and query following the example below.
+ 
+
+ 
+
+After that save all the settings and new custom collection(Samples) is formed in the System Manager as below shown in the snapshot.  
+
+ 
+
+5)	Run buildWebApp command.
+
+6)	Run deployApp command.
+
+
+7)	Start Inquira indexer instance.
+
+8)	Run the Job in System Manager and Verify.
+
+9)	After performing all these steps ,you will see the crawled database content in InfoCenter.
+
+ 
+
+ 
+    
+
