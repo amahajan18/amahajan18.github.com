@@ -5,7 +5,7 @@ Following are the steps that require to create a custom content crawler.
 Which shows you how to crawl a database that tracks content on a website not otherwise crawled and consequently not available in the Content Store.
 
 To create a database web crawler. Following DBWebCrawler.java is required.
-
+//extra
 package samples.content.dbwebcrawler;
 import java.io.*;
 import java.util.*;
